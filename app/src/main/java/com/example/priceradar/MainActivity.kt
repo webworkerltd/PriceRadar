@@ -190,7 +190,7 @@ class ApifyApi {
         }
     }
 
-    // ==================== OZON (новый актор APa5EQZZaXHWBmogv) ====================
+    // ==================== OZON (APa5EQZZaXHWBmogv) ====================
     suspend fun searchOzon(query: String): List<Product> = withContext(Dispatchers.IO) {
         try {
             val actorId = "APa5EQZZaXHWBmogv"
@@ -209,95 +209,73 @@ class ApifyApi {
                 "language": "ru",
                 "currency": "RUB"
             }"""
-            Log.d("ApifyOzon", "Запуск Ozon (новый актор) с keyword: $query")
+            Log.d("ApifyOzon", "Запуск Ozon (APa5EQZZaXHWBmogv) с keyword: $query")
 
             val runRequest = Request.Builder()
                 .url("https://api.apify.com/v2/acts/$actorId/runs?token=$apiToken")
                 .post(RequestBody.create(JSON_MEDIA, runBody))
                 .build()
             val runResponse = client.newCall(runRequest).execute()
-            val responseBody = runResponse.body?.string() ?: "{}"
-            val runJson = JSONObject(responseBody)
+            val runJson = JSONObject(runResponse.body?.string() ?: "{}")
 
             if (runJson.has("error")) {
-                val errorMsg = runJson.optString("error", "Неизвестная ошибка")
-                Log.e("ApifyOzon", "Ошибка API Ozon: $errorMsg")
+                Log.e("ApifyOzon", "Ошибка API: ${runJson.optString("error")}")
                 return@withContext emptyList()
             }
-
             if (!runJson.has("data")) {
-                Log.e("ApifyOzon", "Ошибка запуска: ${runJson.optString("error", "неизвестно")}")
+                Log.e("ApifyOzon", "Нет поля data в ответе")
                 return@withContext emptyList()
             }
             val runId = runJson.getJSONObject("data").getString("id")
             val datasetId = runJson.getJSONObject("data").getString("defaultDatasetId")
-            Log.d("ApifyOzon", "Актор запущен, runId: $runId, datasetId: $datasetId")
+            Log.d("ApifyOzon", "Запущен, runId=$runId, datasetId=$datasetId")
 
             var status = "RUNNING"
             var attempts = 0
-            val maxAttempts = 60
-            while (status == "RUNNING" && attempts < maxAttempts) {
+            while (status == "RUNNING" && attempts < 60) {
                 delay(3000)
-                val statusRequest = Request.Builder()
+                val statusReq = Request.Builder()
                     .url("https://api.apify.com/v2/acts/$actorId/runs/$runId?token=$apiToken")
                     .build()
-                val statusResponse = client.newCall(statusRequest).execute()
-                val statusJson = JSONObject(statusResponse.body?.string() ?: "{}")
+                val statusRes = client.newCall(statusReq).execute()
+                val statusJson = JSONObject(statusRes.body?.string() ?: "{}")
                 status = statusJson.getJSONObject("data").getString("status")
                 attempts++
-                Log.d("ApifyOzon", "Статус: $status (${attempts}/$maxAttempts)")
+                Log.d("ApifyOzon", "Статус: $status ($attempts/60)")
                 if (status != "RUNNING") break
             }
             if (status != "SUCCEEDED") {
-                Log.e("ApifyOzon", "Ошибка статуса: $status")
+                Log.e("ApifyOzon", "Статус не SUCCEEDED: $status")
                 return@withContext emptyList()
             }
 
-            val itemsRequest = Request.Builder()
+            val itemsReq = Request.Builder()
                 .url("https://api.apify.com/v2/datasets/$datasetId/items?token=$apiToken&clean=true")
                 .build()
-            val itemsResponse = client.newCall(itemsRequest).execute()
-            val itemsString = itemsResponse.body?.string() ?: "[]"
+            val itemsRes = client.newCall(itemsReq).execute()
+            val itemsString = itemsRes.body?.string() ?: "[]"
             val itemsArray = JSONObject("{\"items\":$itemsString}").getJSONArray("items")
             Log.d("ApifyOzon", "Получено товаров: ${itemsArray.length()}")
 
             val products = mutableListOf<Product>()
             for (i in 0 until itemsArray.length()) {
                 val item = itemsArray.getJSONObject(i)
-
-                val name = item.optString("name").takeIf { it.isNotEmpty() }
-                    ?: item.optString("title")
-                    ?: query
-
-                val productUrl = item.optString("url").takeIf { it.isNotEmpty() }
-                    ?: item.optString("productUrl")
-                    ?: ""
-
-                val imageUrl = item.optString("imageUrl").takeIf { it.isNotEmpty() }
-                    ?: item.optString("image")
-                    ?: ""
-
-                val currentPrice = when (val p = item.opt("price")) {
-                    is Int -> p
-                    is Double -> p.toInt()
-                    is String -> p.replace("₽", "").replace(" ", "").toIntOrNull() ?: 0
-                    else -> 0
-                }
-                val oldPrice = when (val op = item.opt("oldPrice")) {
-                    is Int -> op
-                    is Double -> op.toInt()
-                    is String -> op.replace("₽", "").replace(" ", "").toIntOrNull() ?: 0
-                    else -> 0
-                }
-                val discount = item.optInt("discount", 0)
+                val name = item.optString("name")
+                val productUrl = item.optString("url")
+                val imageUrl = item.optString("image")
+                val price = item.optInt("price")
+                val oldPrice = item.optInt("oldPrice")
+                val discount = item.optInt("discount")
                 val rating = item.optDouble("rating", 0.0).toFloat()
-                val reviews = item.optInt("reviewsCount", 0)
+                val reviews = item.optInt("reviewsCount")
 
-                if (currentPrice > 0 && name.isNotBlank() && productUrl.isNotBlank()) {
+                Log.d("ApifyOzon", "Товар $i: $name, цена $price, url $productUrl")
+
+                if (name.isNotBlank() && productUrl.isNotBlank() && price > 0) {
                     products.add(Product(
                         marketplace = "Ozon",
                         name = name,
-                        price = currentPrice,
+                        price = price,
                         originalPrice = oldPrice,
                         discountPercent = discount,
                         rating = rating,
@@ -307,6 +285,8 @@ class ApifyApi {
                         productUrl = productUrl,
                         imageUrl = imageUrl
                     ))
+                } else {
+                    Log.w("ApifyOzon", "Пропущен товар: name=$name, price=$price, url=$productUrl")
                 }
             }
             return@withContext products
@@ -316,20 +296,18 @@ class ApifyApi {
         }
     }
 
-    // ==================== ЯНДЕКС МАРКЕТ ====================
+    // ==================== ЯНДЕКС МАРКЕТ (txUbFMvDZI1SnMzJa) ====================
     suspend fun searchYandexMarket(query: String): List<Product> = withContext(Dispatchers.IO) {
         try {
-            val actorId = "y7gc70pJD81ubH2I9"
+            val actorId = "txUbFMvDZI1SnMzJa"
             val runBody = """{
-                "text": "$query",
-                "yandex_domain": "yandex.ru",
-                "lang": "ru",
-                "max_pages": 1,
-                "groups_on_page": 10,
-                "family_mode": 0,
-                "fix_typo": true
+                "query": "$query",
+                "maxItems": 10,
+                "region": "213",
+                "enrichProducts": true,
+                "includeReviews": false
             }"""
-            Log.d("ApifyYandex", "Запуск Яндекс.Поиск с query: $query")
+            Log.d("ApifyYandex", "Запуск Яндекс.Маркет (txUbFMvDZI1SnMzJa) с query: $query")
 
             val runRequest = Request.Builder()
                 .url("https://api.apify.com/v2/acts/$actorId/runs?token=$apiToken")
@@ -337,77 +315,77 @@ class ApifyApi {
                 .build()
             val runResponse = client.newCall(runRequest).execute()
             val runJson = JSONObject(runResponse.body?.string() ?: "{}")
+
+            if (runJson.has("error")) {
+                Log.e("ApifyYandex", "Ошибка API: ${runJson.optString("error")}")
+                return@withContext emptyList()
+            }
             if (!runJson.has("data")) {
-                Log.e("ApifyYandex", "Ошибка запуска: ${runJson.optString("error", "неизвестно")}")
+                Log.e("ApifyYandex", "Нет поля data в ответе")
                 return@withContext emptyList()
             }
             val runId = runJson.getJSONObject("data").getString("id")
             val datasetId = runJson.getJSONObject("data").getString("defaultDatasetId")
-            Log.d("ApifyYandex", "Актор запущен, runId: $runId, datasetId: $datasetId")
+            Log.d("ApifyYandex", "Запущен, runId=$runId, datasetId=$datasetId")
 
             var status = "RUNNING"
             var attempts = 0
-            val maxAttempts = 60
-            while (status == "RUNNING" && attempts < maxAttempts) {
+            while (status == "RUNNING" && attempts < 60) {
                 delay(3000)
-                val statusRequest = Request.Builder()
+                val statusReq = Request.Builder()
                     .url("https://api.apify.com/v2/acts/$actorId/runs/$runId?token=$apiToken")
                     .build()
-                val statusResponse = client.newCall(statusRequest).execute()
-                val statusJson = JSONObject(statusResponse.body?.string() ?: "{}")
+                val statusRes = client.newCall(statusReq).execute()
+                val statusJson = JSONObject(statusRes.body?.string() ?: "{}")
                 status = statusJson.getJSONObject("data").getString("status")
                 attempts++
-                Log.d("ApifyYandex", "Статус: $status (${attempts}/$maxAttempts)")
+                Log.d("ApifyYandex", "Статус: $status ($attempts/60)")
                 if (status != "RUNNING") break
             }
             if (status != "SUCCEEDED") {
-                Log.e("ApifyYandex", "Ошибка статуса: $status")
+                Log.e("ApifyYandex", "Статус не SUCCEEDED: $status")
                 return@withContext emptyList()
             }
 
-            val itemsRequest = Request.Builder()
+            val itemsReq = Request.Builder()
                 .url("https://api.apify.com/v2/datasets/$datasetId/items?token=$apiToken&clean=true")
                 .build()
-            val itemsResponse = client.newCall(itemsRequest).execute()
-            val itemsString = itemsResponse.body?.string() ?: "[]"
+            val itemsRes = client.newCall(itemsReq).execute()
+            val itemsString = itemsRes.body?.string() ?: "[]"
             val itemsArray = JSONObject("{\"items\":$itemsString}").getJSONArray("items")
-            Log.d("ApifyYandex", "Получено элементов страниц: ${itemsArray.length()}")
+            Log.d("ApifyYandex", "Получено товаров: ${itemsArray.length()}")
 
             val products = mutableListOf<Product>()
             for (i in 0 until itemsArray.length()) {
-                val pageItem = itemsArray.getJSONObject(i)
-                if (!pageItem.has("organic")) continue
-                val organicArray = pageItem.getJSONArray("organic")
-                for (j in 0 until organicArray.length()) {
-                    val result = organicArray.getJSONObject(j)
-                    val title = result.optString("title")
-                    val link = result.optString("link")
-                    if (title.isBlank() || link.isBlank()) continue
+                val item = itemsArray.getJSONObject(i)
+                val name = item.optString("title")
+                val productUrl = item.optString("url")
+                val imageUrl = item.optString("image")
+                val price = item.optInt("price")
+                val oldPrice = item.optInt("originalPrice")
+                val rating = item.optDouble("rating", 0.0).toFloat()
+                val reviews = item.optInt("reviews")
 
-                    val snippet = result.optString("snippet")
-                    val priceRegex = Regex("(\\d+[\\s\\d]*)(?:\\s?₽|руб|рублей)")
-                    val priceMatch = priceRegex.find(title) ?: priceRegex.find(snippet)
-                    val price = priceMatch?.groupValues?.get(1)?.replace("\\s".toRegex(), "")?.toIntOrNull() ?: 0
-                    if (price == 0) continue
+                Log.d("ApifyYandex", "Товар $i: $name, цена $price, url $productUrl")
 
-                    val imageUrl = result.optString("thumbnail", "")
-
+                if (name.isNotBlank() && productUrl.isNotBlank() && price > 0) {
                     products.add(Product(
                         marketplace = "Яндекс Маркет",
-                        name = title.take(100),
+                        name = name,
                         price = price,
-                        originalPrice = 0,
-                        discountPercent = 0,
-                        rating = 0f,
-                        reviewsCount = 0,
+                        originalPrice = oldPrice,
+                        discountPercent = if (oldPrice > price) ((oldPrice - price) * 100 / oldPrice).toInt() else 0,
+                        rating = rating,
+                        reviewsCount = reviews,
                         deliveryDays = (2..5).random(),
                         color = Color(0xFFFFCC00),
-                        productUrl = link,
+                        productUrl = productUrl,
                         imageUrl = imageUrl
                     ))
+                } else {
+                    Log.w("ApifyYandex", "Пропущен товар: name=$name, price=$price, url=$productUrl")
                 }
             }
-            Log.d("ApifyYandex", "Извлечено товаров: ${products.size}")
             return@withContext products
         } catch (e: Exception) {
             Log.e("ApifyYandex", "Ошибка: ${e.message}", e)
@@ -416,7 +394,7 @@ class ApifyApi {
     }
 }
 
-// ==================== UI ====================
+// ==================== UI (Onboarding, Profile, Search, Results, ProductCard) ====================
 
 @Composable
 fun PriceRadarApp(imageLoader: ImageLoader) {
@@ -617,11 +595,13 @@ fun ResultsScreen(query: String, onBack: () -> Unit, imageLoader: ImageLoader) {
                 allProducts.addAll(ozonProducts)
                 allProducts.addAll(yandexProducts)
 
+                Log.d("ResultsScreen", "Итог: WB=${wbProducts.size}, Ozon=${ozonProducts.size}, Yandex=${yandexProducts.size}, Всего=${allProducts.size}")
+
                 if (allProducts.isEmpty()) errorMessage = "Ничего не найдено"
                 else products = allProducts.sortedBy { it.price }
             } catch (e: Exception) {
                 errorMessage = "Ошибка: ${e.message}"
-                Log.e("App", "Ошибка поиска", e)
+                Log.e("ResultsScreen", "Ошибка поиска", e)
             } finally {
                 isLoading = false
             }
