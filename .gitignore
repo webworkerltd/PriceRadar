@@ -1,0 +1,29 @@
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+# Файлы сборки Gradle (они будут созданы заново на Mac)
+.gradle/
+build/
+app/build/
+
+# Локальные настройки Android Studio (содержат пути к SDK на Windows)
+local.properties
+
+# Файлы IDE
+.idea/
+*.iml
+
+# Файлы ОС
+.DS_Store
